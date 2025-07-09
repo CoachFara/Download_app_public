@@ -245,14 +245,15 @@ if st.session_state.replay_buffers:
     zip_buffer = BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
         for buffer, name in st.session_state.replay_buffers:
-            buffer.seek(0)
+            buffer.seek(0)  # Important: reset each buffer
             zip_file.writestr(f"{name}.rofl", buffer.read())
-    zip_buffer.seek(0)
 
-    # 🔘 Single download button for ZIP
+    zip_buffer.seek(0)  # Important: reset ZIP buffer to start
+
+    # ✅ This works on Streamlit Cloud
     st.download_button(
         label="📦 Download All as ZIP",
-        data=zip_buffer,
+        data=zip_buffer.getvalue(),  # ✅ convert to bytes!
         file_name="all_replays.zip",
         mime="application/zip"
     )
