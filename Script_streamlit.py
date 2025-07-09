@@ -7,6 +7,8 @@ import webbrowser
 import warnings
 import time
 import subprocess
+from io import BytesIO
+import zipfile
 
 
 
@@ -19,8 +21,6 @@ API_KEY = Api['API_KEY']
 URL_LIST = 'https://api.grid.gg/central-data/graphql'
 headers = {"x-api-key": API_KEY}
 
-user = os.getenv('USERNAME')
-folder_path = fr"C:\Users\{user}\Desktop\Library\Replays"
 
 team_id_dict = {
 'T1': {'id': '47494', 'name': 'T1'},
@@ -140,7 +140,7 @@ def get_tag_by_team_id(team_id):
 def get_url_download(series_id, sequence_number):
     return f'https://api.grid.gg/file-download/replay/riot/series/{series_id}/games/{sequence_number}'
 
-def get_rofl(series_id, sequence_number, team_code):
+"""def get_rofl(series_id, sequence_number, team_code):
     url = get_url_download(series_id, sequence_number)
     res = requests.get(url, headers={'x-api-key': API_KEY})
     if res.status_code == 200:
@@ -151,7 +151,19 @@ def get_rofl(series_id, sequence_number, team_code):
                 f.write(chunk)
         return f"✅ Saved: {file_path}"
     else:
-        return f"❌ Failed to download: {url} (Status {res.status_code})"
+        return f"❌ Failed to download: {url} (Status {res.status_code})"""
+    
+
+
+def get_rofl(series_id, sequence_number, team_code):
+    url = get_url_download(series_id, sequence_number)
+    res = requests.get(url, headers={'x-api-key': API_KEY})
+    if res.status_code == 200:
+        buffer = BytesIO(res.content)
+        return buffer, team_code  # return as a tuple
+    else:
+        return None, f"❌ Failed to download: {url} (Status {res.status_code})"
+
 
 def Listgames_download_EMH(start_date, end_date, team_tag, game_type):
     query = (get_query_competitive(start_date, end_date, team_id_dict[team_tag]['id'])
@@ -178,7 +190,10 @@ def Listgames_download_EMH(start_date, end_date, team_tag, game_type):
                 else:
                     name = f"{gamedate.strftime('%m-%d-T%H-%M')}_{t1}_vs_{t2}"
                 result_msg = get_rofl(series_id, i+1, name)
-                status_list.append(result_msg)
+                if isinstance(result_msg, tuple):
+                    st.session_state.replay_buffers.append(result_msg)
+                else:
+                    st.session_state.replay_errors.append(result_msg)
             except Exception as e:
                 status_list.append(f"❌ Error downloading game {i+1}: {e}")
     return status_list
@@ -187,8 +202,15 @@ def Listgames_download_EMH(start_date, end_date, team_tag, game_type):
 st.set_page_config(page_title="LoL Replay Downloader", layout="centered")
 st.title("🎮 LoL Competitive Replay Downloader")
 
+# Session state to store download buffers and errors
+if "replay_buffers" not in st.session_state:
+    st.session_state.replay_buffers = []
+if "replay_errors" not in st.session_state:
+    st.session_state.replay_errors = []
+
 team_tag = st.selectbox("Select Team", list(team_id_dict.keys()))
 game_type = st.selectbox("Select Type", ['competitive', 'scrim'])
+
 col1, col2 = st.columns(2)
 with col1:
     start_date = st.date_input("Start Date")
@@ -196,15 +218,58 @@ with col2:
     end_date = st.date_input("End Date")
 
 if st.button("Download Replays"):
+    st.session_state.replay_buffers.clear()
+    st.session_state.replay_errors.clear()
+
     start = start_date.strftime("%Y-%m-%dT00:00:00Z")
     end = end_date.strftime("%Y-%m-%dT00:00:00Z")
-    with st.spinner("Downloading..."):
-        results = Listgames_download_EMH(start, end, team_tag, game_type)
-    for line in results:
-        st.write(line)
 
-st.info(f"📁 Replays will be saved to: `{folder_path}`")
+    with st.spinner("Downloading..."):
+        _ = Listgames_download_EMH(start, end, team_tag, game_type)
+
+# Show all available replays for download
+if st.session_state.replay_buffers:
+    st.success(f"{len(st.session_state.replay_buffers)} replays ready:")
+
+    # 🔁 Download individual buttons
+    for buffer, name in st.session_state.replay_buffers:
+        st.download_button(
+            label=f"Download {name}.rofl",
+            data=buffer,
+            file_name=f"{name}.rofl",
+            mime="application/octet-stream",
+            key=name  # Unique key
+        )
+
+    # 📦 Build zip archive in memory
+    zip_buffer = BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+        for buffer, name in st.session_state.replay_buffers:
+            buffer.seek(0)
+            zip_file.writestr(f"{name}.rofl", buffer.read())
+    zip_buffer.seek(0)
+
+    # 🔘 Single download button for ZIP
+    st.download_button(
+        label="📦 Download All as ZIP",
+        data=zip_buffer,
+        file_name="all_replays.zip",
+        mime="application/zip"
+    )
+
+# Show any download errors
+if st.session_state.replay_errors:
+    for error in st.session_state.replay_errors:
+        st.error(error)
+
+# Optional: Clear all results manually
+if st.session_state.replay_buffers or st.session_state.replay_errors:
+    if st.button("Clear Downloads"):
+        st.session_state.replay_buffers.clear()
+        st.session_state.replay_errors.clear()
 
 
 # Launch streamlit
+
+
 
