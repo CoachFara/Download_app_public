@@ -166,37 +166,76 @@ def get_rofl(series_id, sequence_number, team_code):
 
 
 def Listgames_download_EMH(start_date, end_date, team_tag, game_type):
-    query = (get_query_competitive(start_date, end_date, team_id_dict[team_tag]['id'])
-             if game_type == 'competitive' else
-             get_query_scrim(start_date, end_date))
-    
-    result = get_list(query)
-    nodes = result['data']['allSeries']['edges']
-    status_list = []
+    progress_bar = st.progress(0, text="Downloading replays...")
+    status_text = st.empty()
+    download_area = st.container()
 
-    for node in nodes:
-        node_data = node['node']
-        gamedate = datetime.strptime(node_data['startTimeScheduled'], "%Y-%m-%dT%H:%M:%SZ")
-        series_id = node_data['id']
-        format_id = node_data.get('format', {}).get('id', '1')
-        num_games = {'1': 1, '3': 3, '4': 5}.get(format_id, 1)
+    query = (
+        get_query_competitive(start, end, team_id_dict[team_tag]['id'])
+        if game_type == 'competitive'
+        else get_query_scrim(start, end)
+    )
 
-        for i in range(num_games):
-            try:
-                t1 = get_tag_by_team_id(node_data['teams'][0]['baseInfo']['id']) or node_data['teams'][0]['baseInfo']['name']
-                t2 = get_tag_by_team_id(node_data['teams'][1]['baseInfo']['id']) or node_data['teams'][1]['baseInfo']['name']
-                if game_type == 'competitive':
-                    name = f"{gamedate.strftime('%m-%d')}_{t1}_vs_{t2}_{i+1}"
-                else:
-                    name = f"{gamedate.strftime('%m-%d-T%H-%M')}_{t1}_vs_{t2}"
-                result_msg = get_rofl(series_id, i+1, name)
-                if isinstance(result_msg, tuple):
-                    st.session_state.replay_buffers.append(result_msg)
-                else:
-                    st.session_state.replay_errors.append(result_msg)
-            except Exception as e:
-                status_list.append(f"❌ Error downloading game {i+1}: {e}")
-    return status_list
+    try:
+        result = get_list(query)
+        nodes = result['data']['allSeries']['edges']
+        total_matches = sum(
+            {'1': 1, '3': 3, '4': 5}.get(node['node'].get('format', {}).get('id', '1'), 1)
+            for node in nodes
+        )
+        completed = 0
+
+        for node in nodes:
+            node_data = node['node']
+            gamedate = datetime.strptime(node_data['startTimeScheduled'], "%Y-%m-%dT%H:%M:%SZ")
+            series_id = node_data['id']
+            format_id = node_data.get('format', {}).get('id', '1')
+            num_games = {'1': 1, '3': 3, '4': 5}.get(format_id, 1)
+
+            for i in range(num_games):
+                try:
+                    t1 = get_tag_by_team_id(node_data['teams'][0]['baseInfo']['id']) or node_data['teams'][0]['baseInfo']['name']
+                    t2 = get_tag_by_team_id(node_data['teams'][1]['baseInfo']['id']) or node_data['teams'][1]['baseInfo']['name']
+                    name = (
+                        f"{gamedate.strftime('%m-%d')}_{t1}_vs_{t2}_{i+1}"
+                        if game_type == 'competitive'
+                        else f"{gamedate.strftime('%m-%d-T%H-%M')}_{t1}_vs_{t2}"
+                    )
+
+                    buffer, result_or_error = get_rofl(series_id, i + 1, name)
+
+                    if buffer:
+                        st.session_state.replay_buffers.append((buffer, name))
+                        with download_area:
+                            st.download_button(
+                                label=f"Download {name}.rofl",
+                                data=buffer,
+                                file_name=f"{name}.rofl",
+                                mime="application/octet-stream",
+                                key=name
+                            )
+                    else:
+                        st.session_state.replay_errors.append(result_or_error)
+                        with download_area:
+                            st.error(result_or_error)
+
+                except Exception as e:
+                    error_msg = f"❌ Error in {name}: {str(e)}"
+                    st.session_state.replay_errors.append(error_msg)
+                    with download_area:
+                        st.error(error_msg)
+
+                completed += 1
+                progress_bar.progress(completed / total_matches, text=f"Downloaded {completed}/{total_matches} replays")
+
+        status_text.success("All downloads finished!")
+
+    except Exception as e:
+        st.error(f"Error fetching match list: {e}")
+
+
+
+
 
 # === STREAMLIT UI ===
 st.set_page_config(page_title="LoL Replay Downloader", layout="centered")
